@@ -1,0 +1,20 @@
+name:                distributed-process-fixedmaster
+version:             0.1.0.0
+author:              Niklas Hambuechen
+category:            Control
+build-type:          Simple
+cabal-version:       >=1.8
+
+
+executable distributed-process-fixedmaster
+  main-is: SimpleLocalnet.hs
+  hs-source-dirs: .
+  other-modules:
+      WorkStealing
+  build-depends:
+      base == 4.5.*
+    , distributed-process >= 0.3.2
+    , distributed-process-simplelocalnet >= 0.2.0.7
+  ghc-options:
+    -Wall -fwarn-unused-imports
+
