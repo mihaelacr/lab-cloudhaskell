@@ -10,16 +10,19 @@ import Control.Distributed.Process.Closure
 slave :: (ProcessId, ProcessId) -> Process ()
 slave (master, workQueue) = do
     us <- getSelfPid
+    liftIO . print $ "jo"
     go us
   where
     go us = do
       -- Ask the queue for work
       send workQueue us
+      liftIO . print $ "sent"
 
       -- If there is work, do it, otherwise terminate
       receiveWait
-        [ match $ \n  -> send master ("hello " ++ show (n :: Int)) >> go us
+        [ match $ \n  -> do send master ("hello " ++ show (n :: Int)) >> liftIO (print ("matched", n)) >> go us
         , match $ \() -> return ()
+        -- , match $ \_  -> liftIO . print $ "whatever"
         ]
 
 remotable ['slave]
@@ -42,6 +45,7 @@ master n slaves = do
     -- Reply with the next bit of work to be done
     forM_ [1 .. n] $ \m -> do
       them <- expect
+      liftIO . print $ ("got them", them)
       send them m
 
     -- Once all the work is done, tell the slaves to terminate

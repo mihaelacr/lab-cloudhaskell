@@ -15,6 +15,7 @@ executable distributed-process-fixedmaster
       base == 4.5.*
     , distributed-process >= 0.3.2
     , distributed-process-simplelocalnet >= 0.2.0.7
+    , hostname >= 1.0
   ghc-options:
-    -Wall -fwarn-unused-imports
+    -Wall -fwarn-unused-imports -threaded
 
