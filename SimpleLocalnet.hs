@@ -36,6 +36,7 @@ main = do
     ["slave", host, port] -> do
       -- host <- getHostName
       backend <- initializeBackend host port rtable
+      -- This does terminate only when terminateSlave / terminateAllSlaves is called
       startSlave backend
     _ -> do
       hPutStrLn stderr "invalid arguments" >> exitFailure

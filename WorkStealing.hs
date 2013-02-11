@@ -13,6 +13,7 @@ slave (master, workQueue) = do
     us <- getSelfPid
     liftIO . print $ "jo"
     go us
+    liftIO $ putStrLn "slave done"
   where
     go us = do
       -- Ask the queue for work
@@ -26,7 +27,9 @@ slave (master, workQueue) = do
                             send master ("hello " ++ show n)
                             liftIO . print $ ("matched sent", n)
                             go us
-        , match $ \() -> return ()
+        , match $ \() -> do
+                            liftIO . putStrLn $ "slave shutting down"
+                            return ()
         , matchUnknown $ do
                             liftIO . putStrLn $ "WARNING: Unknown message received"
                             go us
@@ -56,6 +59,8 @@ master n slaves = do
       liftIO . print $ ("got them", them)
       send them m
       liftIO . print $ ("sent them", them, m)
+
+    liftIO $ putStrLn "loop done"
 
     -- Once all the work is done, tell the slaves to terminate
     forever $ do
