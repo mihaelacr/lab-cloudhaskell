@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns, TemplateHaskell #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module WorkStealing where
 
@@ -20,8 +21,15 @@ slave (master, workQueue) = do
 
       -- If there is work, do it, otherwise terminate
       receiveWait
-        [ match $ \n  -> do send master ("hello " ++ show (n :: Int)) >> liftIO (print ("matched", n)) >> go us
+        [ match $ \(n :: Int)  -> do
+                            liftIO . print $ ("matched", n)
+                            send master ("hello " ++ show n)
+                            liftIO . print $ ("matched sent", n)
+                            go us
         , match $ \() -> return ()
+        , matchUnknown $ do
+                            liftIO . putStrLn $ "WARNING: Unknown message received"
+                            go us
         -- , match $ \_  -> liftIO . print $ "whatever"
         ]
 
@@ -41,12 +49,13 @@ master :: Integer -> [NodeId] -> Process Integer
 master n slaves = do
   us <- getSelfPid
 
-  workQueue <- spawnLocal $ do
+  workQueue :: ProcessId <- spawnLocal $ do
     -- Reply with the next bit of work to be done
-    forM_ [1 .. n] $ \m -> do
+    forM_ [1 .. n] $ \(m :: Integer) -> do
       them <- expect
       liftIO . print $ ("got them", them)
       send them m
+      liftIO . print $ ("sent them", them, m)
 
     -- Once all the work is done, tell the slaves to terminate
     forever $ do
