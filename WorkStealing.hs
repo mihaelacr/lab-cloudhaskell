@@ -1,6 +1,6 @@
 {-# LANGUAGE BangPatterns, TemplateHaskell #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE ImpredicativeTypes #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 
 module WorkStealing where
 
@@ -8,9 +8,24 @@ import Control.Monad
 import Control.Distributed.Process
 import Control.Distributed.Process.Closure
 import Control.Distributed.Process.Serializable
+import Data.Typeable
+import Data.Binary
 
-slave :: forall a b . (Serializable a, Serializable b) => (a -> Process b) -> (ProcessId, ProcessId) -> Process ()
-slave slaveProcess (master, workQueue) = do
+data WorkStealingControlMessage = NoMoreWork
+                                deriving (Typeable)
+
+
+instance Binary WorkStealingControlMessage where
+  put NoMoreWork = putWord8 0
+  get = do
+    header <- getWord8
+    case header of
+      0 -> return NoMoreWork
+      _ -> fail "WorkStealingControlMessage.get: invalid"
+
+
+slave :: [Match ()] -> (ProcessId, ProcessId) -> Process ()
+slave matches (master, workQueue) = do
     us <- getSelfPid
     liftIO . print $ "jo"
     go us
@@ -19,20 +34,20 @@ slave slaveProcess (master, workQueue) = do
     go us = do
       -- Ask the queue for work
       send workQueue us
-      liftIO . print $ "sent"
+      liftIO . print $ "sent slave worker ready"
 
       -- If there is work, do it
-      receiveWait
-        [ match $ \(x :: a) -> do
-                                  res <- slaveProcess x
-                                  send master res
+      receiveWait (
+        matches ++
+        [ match $ \NoMoreWork -> return ()
         , matchUnknown $ do
                             liftIO . putStrLn $ "WARNING: Unknown message received"
                             go us
         ]
+        )
 
 slaveX :: (ProcessId, ProcessId) -> Process ()
-slaveX = slave (\(_ :: Int) -> return ())
+slaveX = slave []
 
 -- remotable ['slave]
 remotable ['slaveX]
@@ -64,7 +79,7 @@ master n slaves = do
     -- Once all the work is done, tell the slaves to terminate
     forever $ do
       pid <- expect
-      send pid ()
+      send pid NoMoreWork
 
   -- Start slave processes
   forM_ slaves $ \nid -> spawn nid ($(mkClosure 'slaveX) (us, workQueue))
