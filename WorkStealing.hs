@@ -27,24 +27,27 @@ instance Binary WorkStealingControlMessage where
 slave :: [Match ()] -> (ProcessId, ProcessId) -> Process ()
 slave matches (master, workQueue) = do
     us <- getSelfPid
-    liftIO . print $ "jo"
-    go us
-    liftIO $ putStrLn "slave done"
+    logSlave "INITIALIZED"
+    run us
+    logSlave "DONE FOR THIS MASTER"
   where
-    go us = do
+    run us = do
       -- Ask the queue for work
+      logSlave "ANNOUNCING MYSELF"
       send workQueue us
-      liftIO . print $ "sent slave worker ready"
+      logSlave "WAITING FOR WORK"
 
       -- If there is work, do it
       receiveWait (
         matches ++
         [ match $ \NoMoreWork -> return ()
         , matchUnknown $ do
-                            liftIO . putStrLn $ "WARNING: Unknown message received"
-                            go us
+                            logSlave "WARNING: Unknown message received"
+                            run us
         ]
         )
+    logSlave s = liftIO . putStrLn $ "Work stealing slave: " ++ s
+
 
 slaveX :: (ProcessId, ProcessId) -> Process ()
 slaveX = slave []
