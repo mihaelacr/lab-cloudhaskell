@@ -21,7 +21,7 @@ slave (master, workQueue) = do
 
       -- If there is work, do it, otherwise terminate
       receiveWait
-        [ match $ \(n :: Int)  -> do
+        [ match $ \(n :: Integer)  -> do
                             liftIO . print $ ("matched", n)
                             send master ("hello " ++ show n)
                             liftIO . print $ ("matched sent", n)
