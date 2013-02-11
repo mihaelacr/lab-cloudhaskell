@@ -1,15 +1,16 @@
 {-# LANGUAGE BangPatterns, TemplateHaskell #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ImpredicativeTypes #-}
 
 module WorkStealing where
 
 import Control.Monad
 import Control.Distributed.Process
 import Control.Distributed.Process.Closure
--- import PrimeFactors
+import Control.Distributed.Process.Serializable
 
-slave :: (ProcessId, ProcessId) -> Process ()
-slave (master, workQueue) = do
+slave :: forall a b . (Serializable a, Serializable b) => (a -> Process b) -> (ProcessId, ProcessId) -> Process ()
+slave slaveProcess (master, workQueue) = do
     us <- getSelfPid
     liftIO . print $ "jo"
     go us
@@ -20,23 +21,21 @@ slave (master, workQueue) = do
       send workQueue us
       liftIO . print $ "sent"
 
-      -- If there is work, do it, otherwise terminate
+      -- If there is work, do it
       receiveWait
-        [ match $ \(n :: Integer)  -> do
-                            liftIO . print $ ("matched", n)
-                            send master ("hello " ++ show n)
-                            liftIO . print $ ("matched sent", n)
-                            go us
-        , match $ \() -> do
-                            liftIO . putStrLn $ "slave shutting down"
-                            return ()
+        [ match $ \(x :: a) -> do
+                                  res <- slaveProcess x
+                                  send master res
         , matchUnknown $ do
                             liftIO . putStrLn $ "WARNING: Unknown message received"
                             go us
-        -- , match $ \_  -> liftIO . print $ "whatever"
         ]
 
-remotable ['slave]
+slaveX :: (ProcessId, ProcessId) -> Process ()
+slaveX = slave (\(_ :: Int) -> return ())
+
+-- remotable ['slave]
+remotable ['slaveX]
 
 -- | Wait for n integers and sum them all up
 sumIntegers :: Int -> Process Integer
@@ -68,7 +67,9 @@ master n slaves = do
       send pid ()
 
   -- Start slave processes
-  forM_ slaves $ \nid -> spawn nid ($(mkClosure 'slave) (us, workQueue))
+  forM_ slaves $ \nid -> spawn nid ($(mkClosure 'slaveX) (us, workQueue))
 
   -- Wait for the result
   sumIntegers (fromIntegral n)
+
+
