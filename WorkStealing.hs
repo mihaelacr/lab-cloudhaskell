@@ -24,8 +24,11 @@ instance Binary WorkStealingControlMessage where
       _ -> fail "WorkStealingControlMessage.get: invalid"
 
 
-slave :: forall a b . (Serializable a, Serializable b) => (ProcessId -> a -> Process b) -> (ProcessId, ProcessId) -> Process ()
-slave slaveProcess (master, workQueue) = do
+workStealingSlave :: forall a b . (Serializable a, Serializable b) =>
+                                  (ProcessId -> a -> Process b)
+                               -> (ProcessId, ProcessId)
+                               -> Process ()
+workStealingSlave slaveProcess (master, workQueue) = do
     us <- getSelfPid
     logSlave "INITIALIZED"
     run us
@@ -49,15 +52,48 @@ slave slaveProcess (master, workQueue) = do
     logSlave s = liftIO . putStrLn $ "Work stealing slave: " ++ s
 
 
-slaveX :: (ProcessId, ProcessId) -> Process ()
-slaveX = slave $ \master (x :: Integer) -> do
-  send master "some extra message"
-  return (x*2)
 
--- remotable ['slave]
-remotable ['slaveX]
+workStealingMaster :: (Serializable work) =>
+                      ((ProcessId, ProcessId) -> Closure (Process ()))
+                   -> [work]
+                   -> Process result
+                   -> [NodeId]
+                   -> Process result
+workStealingMaster slaveProcess work resultProcess slaves = do
+  masterPid <- getSelfPid
 
--- | Wait for n integers and sum them all up
+  -- Make a working queue process that handles assigning work to ready slaves
+  queue <- spawnLocal workQueue
+
+  -- Start slave processes on the slaves (asynchronous)
+  forM_ slaves $ \nid -> spawn nid (slaveProcess (masterPid, queue))
+
+  -- Run the code that receives the slaves' answers
+  resultProcess
+
+  where
+    logMaster s = liftIO . putStrLn $ "Work stealing master: " ++ s
+
+    workQueue :: Process ()
+    workQueue = do
+      -- Reply with the next bit of work to be done
+      forM_ work $ \workUnit -> do
+        slavePid <- expect
+        logMaster $ "SLAVE ANNOUNCED " ++ show slavePid ++ " READYNESS"
+        send slavePid workUnit
+        logMaster $ "SENT WORK TO " ++ show slavePid
+
+      logMaster "ALL WORK DONE, NOTIFYING SLAVES OF WORK DONE"
+
+      -- Once all the work is done, tell the slaves that there is no more work
+      -- This does not terminate
+      forever $ do
+        pid <- expect
+        send pid NoMoreWork
+
+
+
+-- | An example "reduce" function: Wait for n integers and sum them all up
 sumIntegers :: Int -> Process Integer
 sumIntegers = go 0
   where
@@ -67,29 +103,19 @@ sumIntegers = go 0
       m <- expect
       go (acc + m) (n - 1)
 
+
+slave :: (ProcessId, ProcessId) -> Process ()
+slave = workStealingSlave $ \master (x :: Integer) -> do
+  send master "some extra message"
+  return (x*2)
+
+
+remotable ['slave]
+
+
 master :: Integer -> [NodeId] -> Process Integer
-master n slaves = do
-  us <- getSelfPid
-
-  workQueue :: ProcessId <- spawnLocal $ do
-    -- Reply with the next bit of work to be done
-    forM_ [1 .. n] $ \(m :: Integer) -> do
-      them <- expect
-      liftIO . print $ ("got them", them)
-      send them m
-      liftIO . print $ ("sent them", them, m)
-
-    liftIO $ putStrLn "loop done"
-
-    -- Once all the work is done, tell the slaves to terminate
-    forever $ do
-      pid <- expect
-      send pid NoMoreWork
-
-  -- Start slave processes
-  forM_ slaves $ \nid -> spawn nid ($(mkClosure 'slaveX) (us, workQueue))
-
-  -- Wait for the result
-  sumIntegers (fromIntegral n)
-
-
+master n slaves = workStealingMaster slaveProcess work resultProcess slaves
+  where
+    slaveProcess = $(mkClosure 'slave)
+    work = [1..n] :: [Integer]
+    resultProcess = sumIntegers (fromIntegral n)
