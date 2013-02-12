@@ -8,6 +8,7 @@ import Control.Distributed.Process.Serializable
 import Data.Typeable
 import Data.Binary
 
+
 data WorkStealingControlMessage = NoMoreWork
                                 deriving (Typeable)
 
@@ -49,14 +50,14 @@ workStealingSlave slaveProcess (master, workQueue) = do
     logSlave s = liftIO . putStrLn $ "Work stealing slave: " ++ s
 
 
-
-workStealingMaster :: (Serializable work) =>
-                      ((ProcessId, ProcessId) -> Closure (Process ()))
-                   -> [work]
-                   -> Process result
-                   -> [NodeId]
-                   -> Process result
-workStealingMaster slaveProcess work resultProcess slaves = do
+-- | Sets up a master for work pushing.
+-- Forks off a process that manages a work queue.
+forkWorkStealingMaster :: (Serializable work) =>
+                          ((ProcessId, ProcessId) -> Closure (Process ()))
+                       -> [work]
+                       -> [NodeId]
+                       -> Process ()
+forkWorkStealingMaster slaveProcess work slaves = do
   masterPid <- getSelfPid
 
   -- Make a working queue process that handles assigning work to ready slaves
@@ -64,9 +65,6 @@ workStealingMaster slaveProcess work resultProcess slaves = do
 
   -- Start slave processes on the slaves (asynchronous)
   forM_ slaves $ \nid -> spawn nid (slaveProcess (masterPid, queue))
-
-  -- Run the code that receives the slaves' answers
-  resultProcess
 
   where
     logMaster s = liftIO . putStrLn $ "Work stealing master: " ++ s

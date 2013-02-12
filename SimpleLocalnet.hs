@@ -10,9 +10,7 @@ import Control.Distributed.Process.Backend.SimpleLocalnet
 import System.Exit
 import System.IO (hPutStrLn, stderr)
 
-import WorkStealing (workStealingMaster, workStealingSlave)
-
-
+import WorkStealing (forkWorkStealingMaster, workStealingSlave)
 
 
 
@@ -27,35 +25,41 @@ sumIntegers = go 0
       go (acc + m) (n - 1)
 
 
-slaveWorker :: (ProcessId, ProcessId) -> Process ()
-slaveWorker = workStealingSlave $ \master (x :: Integer) -> do
+-- | What a slave shall do.
+-- Is given a piece of work and the process ID of the master.
+slave :: (ProcessId, ProcessId) -> Process ()
+slave = workStealingSlave $ \master (x :: Integer) -> do
   send master "some extra message"
   return (x*2)
 
+-- Set up 'slave' as a remote function.
+remotable ['slave]
 
-remotable ['slaveWorker]
 
-
+-- | What the master shall do.
 master :: Backend -> [NodeId] -> Process ()
 master backend slaves = do
-  result <- workStealingMaster slaveProcess work resultProcess slaves
+  -- Start off worker slaves handling (forks off a process)
+  forkWorkStealingMaster slaveProcess work slaves
 
-  liftIO $ print result
+  -- Run the code that receives the slaves' answers
+  result <- sumIntegers (fromIntegral n)
+
+  liftIO . print $ result
 
   -- Terminate the slaves when the master terminates (this is optional)
   terminateAllSlaves backend
 
   where
-    slaveProcess = $(mkClosure 'slaveWorker)
+    -- What to start on the slaves
+    slaveProcess = $(mkClosure 'slave)
     n = 10
     work = [1..n] :: [Integer]
-    resultProcess = sumIntegers (fromIntegral n)
 
 
 
 rtable :: RemoteTable
 rtable = __remoteTable initRemoteTable
-
 
 
 main :: IO ()
@@ -69,7 +73,7 @@ main = do
     ["slave", host, port] -> do
       -- host <- getHostName
       backend <- initializeBackend host port rtable
-      -- This does terminate only when terminateSlave / terminateAllSlaves is called
+      -- This does terminate only when terminateSlave / terminateAllSlaves is called from the master
       startSlave backend
     _ -> do
       hPutStrLn stderr "invalid arguments" >> exitFailure
