@@ -1,12 +1,9 @@
-{-# LANGUAGE BangPatterns, TemplateHaskell #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE ScopedTypeVariables, DeriveDataTypeable #-}
 
 module WorkStealing where
 
 import Control.Monad
 import Control.Distributed.Process
-import Control.Distributed.Process.Closure
 import Control.Distributed.Process.Serializable
 import Data.Typeable
 import Data.Binary
@@ -90,32 +87,3 @@ workStealingMaster slaveProcess work resultProcess slaves = do
       forever $ do
         pid <- expect
         send pid NoMoreWork
-
-
-
--- | An example "reduce" function: Wait for n integers and sum them all up
-sumIntegers :: Int -> Process Integer
-sumIntegers = go 0
-  where
-    go :: Integer -> Int -> Process Integer
-    go !acc 0 = return acc
-    go !acc n = do
-      m <- expect
-      go (acc + m) (n - 1)
-
-
-slave :: (ProcessId, ProcessId) -> Process ()
-slave = workStealingSlave $ \master (x :: Integer) -> do
-  send master "some extra message"
-  return (x*2)
-
-
-remotable ['slave]
-
-
-master :: Integer -> [NodeId] -> Process Integer
-master n slaves = workStealingMaster slaveProcess work resultProcess slaves
-  where
-    slaveProcess = $(mkClosure 'slave)
-    work = [1..n] :: [Integer]
-    resultProcess = sumIntegers (fromIntegral n)

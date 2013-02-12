@@ -1,27 +1,60 @@
+{-# LANGUAGE BangPatterns, TemplateHaskell #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
+
 import System.Environment (getArgs)
 import Control.Distributed.Process
+import Control.Distributed.Process.Closure
 import Control.Distributed.Process.Node (initRemoteTable)
 import Control.Distributed.Process.Backend.SimpleLocalnet
--- import Network.HostName (getHostName)
 import System.Exit
 import System.IO (hPutStrLn, stderr)
-import qualified WorkStealing
+
+import WorkStealing (workStealingMaster, workStealingSlave)
 
 
-rtable :: RemoteTable
-rtable = WorkStealing.__remoteTable initRemoteTable
+
+
+
+-- | An example "reduce" function: Wait for n integers and sum them all up
+sumIntegers :: Int -> Process Integer
+sumIntegers = go 0
+  where
+    go :: Integer -> Int -> Process Integer
+    go !acc 0 = return acc
+    go !acc n = do
+      m <- expect
+      go (acc + m) (n - 1)
+
+
+slaveWorker :: (ProcessId, ProcessId) -> Process ()
+slaveWorker = workStealingSlave $ \master (x :: Integer) -> do
+  send master "some extra message"
+  return (x*2)
+
+
+remotable ['slaveWorker]
 
 
 master :: Backend -> [NodeId] -> Process ()
 master backend slaves = do
-  -- Do something interesting with the slaves
-  liftIO . putStrLn $ "Slaves: " ++ show slaves
+  result <- workStealingMaster slaveProcess work resultProcess slaves
 
-  result <- WorkStealing.master (10) slaves
   liftIO $ print result
 
   -- Terminate the slaves when the master terminates (this is optional)
   terminateAllSlaves backend
+
+  where
+    slaveProcess = $(mkClosure 'slaveWorker)
+    n = 10
+    work = [1..n] :: [Integer]
+    resultProcess = sumIntegers (fromIntegral n)
+
+
+
+rtable :: RemoteTable
+rtable = __remoteTable initRemoteTable
 
 
 
@@ -40,4 +73,3 @@ main = do
       startSlave backend
     _ -> do
       hPutStrLn stderr "invalid arguments" >> exitFailure
-
