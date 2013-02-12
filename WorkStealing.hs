@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables, DeriveDataTypeable #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module WorkStealing where
 
@@ -22,16 +23,22 @@ instance Binary WorkStealingControlMessage where
       _ -> fail "WorkStealingControlMessage.get: invalid"
 
 
+newtype WorkStealingArguments = WorkStealingArguments (ProcessId, ProcessId)
+                              deriving (Typeable, Binary)
+
+
 workStealingSlave :: forall a b . (Serializable a, Serializable b) =>
                                   (ProcessId -> a -> Process b)
-                               -> (ProcessId, ProcessId)
+                               -> WorkStealingArguments
                                -> Process ()
-workStealingSlave slaveProcess (master, workQueue) = do
+workStealingSlave slaveProcess (WorkStealingArguments (master, workQueue)) = do
     us <- getSelfPid
     logSlave "INITIALIZED"
     run us
     logSlave "DONE FOR THIS MASTER"
   where
+    logSlave s = liftIO . putStrLn $ "Work stealing slave: " ++ s
+
     run us = do
       -- Ask the queue for work
       logSlave "ANNOUNCING MYSELF"
@@ -47,7 +54,6 @@ workStealingSlave slaveProcess (master, workQueue) = do
                             run us
         ]
         )
-    logSlave s = liftIO . putStrLn $ "Work stealing slave: " ++ s
 
 
 -- | Sets up a master for work pushing.

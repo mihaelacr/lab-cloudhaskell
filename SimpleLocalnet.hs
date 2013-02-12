@@ -10,7 +10,7 @@ import Control.Distributed.Process.Backend.SimpleLocalnet
 import System.Exit
 import System.IO (hPutStrLn, stderr)
 
-import WorkStealing (forkWorkStealingMaster, workStealingSlave)
+import WorkStealing (WorkStealingArguments, forkWorkStealingMaster, workStealingSlave)
 
 
 
@@ -27,7 +27,7 @@ sumIntegers = go 0
 
 -- | What a slave shall do.
 -- Is given a piece of work and the process ID of the master.
-slave :: (ProcessId, ProcessId) -> Process ()
+slave :: WorkStealingArguments -> Process ()
 slave = workStealingSlave $ \master (x :: Integer) -> do
   send master "some extra message"
   return (x*2)
@@ -71,7 +71,6 @@ main = do
       backend <- initializeBackend host port rtable
       startMaster backend (master backend)
     ["slave", host, port] -> do
-      -- host <- getHostName
       backend <- initializeBackend host port rtable
       -- This does terminate only when terminateSlave / terminateAllSlaves is called from the master
       startSlave backend
