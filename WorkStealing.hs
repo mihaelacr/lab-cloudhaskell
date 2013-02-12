@@ -24,8 +24,8 @@ instance Binary WorkStealingControlMessage where
       _ -> fail "WorkStealingControlMessage.get: invalid"
 
 
-slave :: [Match ()] -> (ProcessId, ProcessId) -> Process ()
-slave matches (master, workQueue) = do
+slave :: forall a b . (Serializable a, Serializable b) => (ProcessId -> a -> Process b) -> (ProcessId, ProcessId) -> Process ()
+slave slaveProcess (master, workQueue) = do
     us <- getSelfPid
     logSlave "INITIALIZED"
     run us
@@ -39,8 +39,8 @@ slave matches (master, workQueue) = do
 
       -- If there is work, do it
       receiveWait (
-        matches ++
-        [ match $ \NoMoreWork -> return ()
+        [ match $ \(x :: a) -> (slaveProcess master x >>= send master) >> run us
+        , match $ \NoMoreWork -> return ()
         , matchUnknown $ do
                             logSlave "WARNING: Unknown message received"
                             run us
@@ -50,7 +50,9 @@ slave matches (master, workQueue) = do
 
 
 slaveX :: (ProcessId, ProcessId) -> Process ()
-slaveX = slave []
+slaveX = slave $ \master (x :: Integer) -> do
+  send master "some extra message"
+  return (x*2)
 
 -- remotable ['slave]
 remotable ['slaveX]
