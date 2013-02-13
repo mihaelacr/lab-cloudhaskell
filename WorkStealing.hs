@@ -8,21 +8,6 @@ import Control.Distributed.Process
 import Control.Distributed.Process.Backend.SimpleLocalnet
 import Control.Distributed.Process.Serializable
 import Control.Monad
-import Data.Binary
-import Data.Typeable
-
-
-data WorkStealingControlMessage = NoMoreWork
-                                deriving (Typeable)
-
-
-instance Binary WorkStealingControlMessage where
-  put NoMoreWork = putWord8 0
-  get = do
-    header <- getWord8
-    case header of
-      0 -> return NoMoreWork
-      _ -> fail "WorkStealingControlMessage.get: invalid"
 
 
 type WorkStealingArguments = (ProcessId, ProcessId)
@@ -44,6 +29,9 @@ workStealingSlave slaveProcess (workQueue, resultQueue) = do
       logSlave "ANNOUNCING MYSELF"
       send workQueue us
       logSlave "WAITING FOR WORK"
+
+      -- TODO should we add back a AllWorkDone message to terminate the slave?
+      -- What will happen if we don't, with every master setting up the slaves again?
 
       -- If there is work, do it
       receiveWait (
