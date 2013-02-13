@@ -3,15 +3,13 @@
 
 module WorkStealing where
 
-import Control.Monad
-import Control.Distributed.Process
-import Control.Distributed.Process.Serializable
-import Data.Typeable
 import Control.Concurrent.Chan as Chan
-import Data.Binary
+import Control.Distributed.Process
 import Control.Distributed.Process.Backend.SimpleLocalnet
-
-
+import Control.Distributed.Process.Serializable
+import Control.Monad
+import Data.Binary
+import Data.Typeable
 
 
 data WorkStealingControlMessage = NoMoreWork
@@ -27,15 +25,12 @@ instance Binary WorkStealingControlMessage where
       _ -> fail "WorkStealingControlMessage.get: invalid"
 
 
--- newtype WorkStealingArguments = WorkStealingArguments (ProcessId, ProcessId)
---                               deriving (Typeable, Binary)
 type WorkStealingArguments = (ProcessId, ProcessId)
 
 
-workStealingSlave :: forall a b . (Serializable a, Serializable b, Show b) =>
+workStealingSlave :: forall a b . (Serializable a, Serializable b) =>
                                   (a -> Process b)
                                -> WorkStealingArguments -> Process ()
--- workStealingSlave slaveProcess (WorkStealingArguments (master, workQueue)) = do
 workStealingSlave slaveProcess (workQueue, resultQueue) = do
     us <- getSelfPid
     logSlave "INITIALIZED"
@@ -52,13 +47,7 @@ workStealingSlave slaveProcess (workQueue, resultQueue) = do
 
       -- If there is work, do it
       receiveWait (
-        -- [ match $ \(x :: a) -> (slaveProcess master x >>= send master) >> run us
-        [ match $ \(x :: a) -> do
-                                  res <- slaveProcess x
-                                  send resultQueue res
-                                  liftIO . print $ ("res", res)
-                                  run us
-        , match $ \NoMoreWork -> return ()
+        [ match $ \(x :: a) -> (slaveProcess x >>= send resultQueue) >> run us
         , matchUnknown $ do
                             logSlave "WARNING: Unknown message received"
                             run us
@@ -73,89 +62,63 @@ forkWorkStealingMaster :: forall a b . (Serializable a, Serializable b) =>
                                     -> Chan a
                                     -> Chan b
                                     -> [NodeId]
-                                    -- -> Process (SendPort a)
                                     -> Process ()
-forkWorkStealingMaster slaveProcess queueChan resChan slaves = do
+forkWorkStealingMaster slaveProcess workChan resChan slaves = do
   masterPid <- getSelfPid
   logMaster $ "forkWorkStealingMaster PID: " ++ show masterPid
 
   -- TODO create typed channel here instead of manual send/expect
-  -- (queueInputChan, queueReceiveChan) <- newChan
-  -- queueChan <- liftIO Chan.newChan
 
   -- Make a working queue process that handles assigning work to ready slaves
-  -- queuePid <- spawnLocal (workQueue queueReceiveChan)
-  queuePid <- spawnLocal (workQueue queueChan)
+  queuePid <- spawnLocal workQueue
 
-  -- Start off result receival
+  -- Start off result receiving queue
   resultQueuePid <- spawnLocal $ do
     forever $ do
-      liftIO . putStrLn $ "expecting resultQueue"
       res :: b <- expect
-      liftIO . putStrLn $ "received resultQueue"
       liftIO $ writeChan resChan res
-
 
   -- Start slave processes on the slaves (asynchronous)
   forM_ slaves $ \nid -> spawn nid (slaveProcess (queuePid, resultQueuePid))
 
-  -- return queueInputChan
-  -- return queueChan
-
   where
     logMaster s = liftIO . putStrLn $ "Work stealing master: " ++ s
 
-    workQueue :: (Serializable a) => Chan a -> Process ()
-    workQueue queueReceiveChan = do
+    workQueue :: (Serializable a) => Process ()
+    workQueue = do
       -- Reply with the next bit of work to be done
-      _ <- forever $ do
+      forever $ do
         slavePid <- expect
         logMaster $ "SLAVE ANNOUNCED READYNESS: " ++ show slavePid
-        workUnit <- liftIO $ readChan queueReceiveChan
-        logMaster $ "got receiveChan work"
+        workUnit <- liftIO $ readChan workChan
         send slavePid workUnit
         logMaster $ "SENT WORK TO " ++ show slavePid
 
-      -- logMaster "ALL WORK DONE, NOTIFYING SLAVES OF WORK DONE"
-      logMaster "ALL WORK DONE, WORK QUEUE TERMINATING"
 
-      -- Once all the work is done, tell the slaves that there is no more work
-      -- This does not terminate
-      -- forever $ do
-      --   pid <- expect
-      --   send pid NoMoreWork
-
-
-
-setUp :: forall a b . (Serializable a, Serializable b, Show a) => (WorkStealingArguments -> Closure (Process ())) -> Backend -> IO (Chan a, Chan b)
-setUp remoteClosure backend = do
+setUpRemoteFun :: forall a b . (Serializable a, Serializable b, Show a) =>
+                               (WorkStealingArguments -> Closure (Process ()))
+                            -> Backend
+                            -> IO (Chan a, Chan b)
+setUpRemoteFun remoteClosure backend = do
 
   inChan <- Chan.newChan
   outChan <- Chan.newChan
 
-  startMaster backend (master' backend inChan outChan)
+  -- Start off worker slaves handling (forks off a process)
+  startMaster backend (forkWorkStealingMaster remoteClosure inChan outChan)
 
   return (inChan, outChan)
-
-  where
-    master' _backend inChan outChan slaves = do
-
-      -- Start off worker slaves handling (forks off a process)
-      forkWorkStealingMaster remoteClosure inChan outChan slaves
 
 
 cloudMap :: forall a b . (Serializable a, Serializable b, Show b) => Chan a -> Chan b -> [a] -> IO [b]
 cloudMap workInputChan outChan xs = do
 
-    mapM (writeChan workInputChan) xs
+  mapM (writeChan workInputChan) xs
 
-    -- Run the code that receives the slaves' answers
-    collect (length xs) []
+  -- Run the code that receives the slaves' answers
+  collect (length xs) []
 
-    where
-      collect 0 ress = return $ reverse ress
-      collect n ress | n > 0 = do
-        res <- readChan outChan
-        collect (n-1) (res:ress)
-
-
+  where
+    collect 0 ress         = return $ reverse ress
+    collect n ress | n > 0 = do res <- readChan outChan
+                                collect (n-1) (res:ress)

@@ -4,7 +4,7 @@ import Control.Distributed.Process
 import Control.Distributed.Process.Closure
 import Control.Distributed.Process.Node (initRemoteTable)
 
-import WorkStealing (WorkStealingArguments, workStealingSlave, setUp, cloudMap)
+import WorkStealing (WorkStealingArguments, workStealingSlave, setUpRemoteFun, cloudMap)
 import WorkStealingMain
 
 
@@ -19,16 +19,18 @@ rtable :: RemoteTable
 rtable = __remoteTable initRemoteTable
 
 
+-- We can only set up ONE remote function - it has to switch on what comes in.
+masterMain :: IO [Int]
+masterMain = do
+  (inChan, outChan) <- mkAutoBackend rtable >>= setUpRemoteFun $(mkClosure 'remoteFunction)
+
+  -- Using the remote function, here with a cloudMap
+  cloudMap inChan outChan [1..4 :: Int]
+
+
 -- Run this as:
 -- * ./program master
 -- * ./program slave [REACHABLE_HOSTNAME] [SOME_PORT]
---
--- We can only set up ONE remote function - it has to switch on what comes in.
 main :: IO ()
 main = workStealingMain (__remoteTable initRemoteTable) $ do
-  (inChan, outChan) <- mkAutoBackend rtable >>= setUp $(mkClosure 'remoteFunction)
-
-  -- Using the remote function, here with a cloudMap
-  res :: [Int] <- cloudMap inChan outChan [1..4 :: Int]
-
-  print res
+  print =<< masterMain
