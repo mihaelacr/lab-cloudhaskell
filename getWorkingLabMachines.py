@@ -12,7 +12,7 @@ def getAllMachines():
   return hostnames
 
 
-def getWorningMachines(hostnames=None, extension=None):
+def getWorkingMachines(hostnames=None, extension=None):
   if not hostnames:
     hostnames = getAllMachines()
   if not extension:
@@ -30,4 +30,4 @@ def getWorningMachines(hostnames=None, extension=None):
   return workingHostames
 
 if __name__ == '__main__':
-  print getWorningMachines()
+  print getWorkingMachines()
