@@ -9,6 +9,9 @@ import Control.Distributed.Process.Serializable
 import Data.Typeable
 import Control.Concurrent.Chan as Chan
 import Data.Binary
+import Control.Distributed.Process.Backend.SimpleLocalnet
+
+
 
 
 data WorkStealingControlMessage = NoMoreWork
@@ -121,3 +124,38 @@ forkWorkStealingMaster slaveProcess queueChan resChan slaves = do
       -- forever $ do
       --   pid <- expect
       --   send pid NoMoreWork
+
+
+
+setUp :: forall a b . (Serializable a, Serializable b, Show a) => (WorkStealingArguments -> Closure (Process ())) -> Backend -> IO (Chan a, Chan b)
+setUp remoteClosure backend = do
+
+  inChan <- Chan.newChan
+  outChan <- Chan.newChan
+
+  startMaster backend (master' backend inChan outChan)
+
+  return (inChan, outChan)
+
+  where
+    master' _backend inChan outChan slaves = do
+
+      -- Start off worker slaves handling (forks off a process)
+      forkWorkStealingMaster remoteClosure inChan outChan slaves
+
+
+cloudMap :: forall a b . (Serializable a, Serializable b, Show b) => Chan a -> Chan b -> [a] -> IO [b]
+cloudMap workInputChan outChan xs = do
+
+    mapM (writeChan workInputChan) xs
+
+    -- Run the code that receives the slaves' answers
+    collect (length xs) []
+
+    where
+      collect 0 ress = return $ reverse ress
+      collect n ress | n > 0 = do
+        res <- readChan outChan
+        collect (n-1) (res:ress)
+
+
