@@ -116,9 +116,9 @@ cloudMap workInputChan outChan xs = do
   mapM (writeChan workInputChan) xs
 
   -- Run the code that receives the slaves' answers
-  collect (length xs) []
+  collect (length xs)
 
   where
-    collect 0 ress         = return $ reverse ress
-    collect n ress | n > 0 = do res <- readChan outChan
-                                collect (n-1) (res:ress)
+    collect n
+      | n < 0     = error "cloudMap: cannot collect < 0 elements"
+      | otherwise = replicateM n (readChan outChan)
