@@ -148,7 +148,7 @@ cloudMap workInputChan outChan xs = do
     return results
 
     where
-      collect 0 ress = return ress
+      collect 0 ress = return $ reverse ress
       collect n ress | n > 0 = do
         res <- readChan outChan
         collect (n-1) (res:ress)
