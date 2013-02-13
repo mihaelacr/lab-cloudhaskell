@@ -38,19 +38,19 @@ slave = workStealingSlave $ \(x :: Integer) -> do
 -- remotable ['slave]
 
 
-simpleF :: forall a b . (Serializable a, Serializable b, Show b) => (a -> b) -> WorkStealingArguments -> Process ()
-simpleF f = workStealingSlave $ \(x :: a) -> (do
-  liftIO $ putStrLn "calculated"
-  -- send master (f x)
-  -- liftIO $ putStrLn "sent"
-  return (f x)
-  )  -- :: Process b
-
-simpleFid :: WorkStealingArguments -> Process ()
-simpleFid = simpleF (\x -> 2 * (x :: Int))
+remoteDouble :: WorkStealingArguments -> Process ()
+remoteDouble = workStealingSlave $ \(x :: Int) -> return (2 * x)
 
 
-remotable ['slave, 'simpleFid]
+remotable ['slave, 'remoteDouble]
+
+
+
+interactive :: [Int] -> IO [Int]
+-- interactive = cloudMap [1,2,3,4::Int] $(mkClosure 'remoteDouble)
+interactive l = cloudMap l $(mkClosure 'remoteDouble)
+
+
 
 
 -- | What the master shall do.
@@ -95,18 +95,11 @@ main = do
       hPutStrLn stderr "invalid arguments" >> exitFailure
 
 
-interactive :: IO [Int]
-interactive = do
-  cloudMap [1,2,3,4::Int] $(mkClosure 'simpleFid)
-
-
-
 -- cloudMap :: (Serializable a, Serializable b) => [a] -> (a -> b) -> IO [b]
 cloudMap :: forall a b . (Serializable a, Serializable b, Show b) => [a] -> (WorkStealingArguments -> Closure (Process ())) -> IO [b]
-cloudMap xs f = do
+cloudMap xs slaveProcess = do
   host <- getHostName
   backend <- initializeBackend host "0" rtable
-  print "h1"
   resultListRef <- newIORef []
   startMaster backend (master' backend resultListRef)
   readIORef resultListRef
@@ -116,27 +109,15 @@ cloudMap xs f = do
       forkWorkStealingMaster slaveProcess xs slaves
 
       -- Run the code that receives the slaves' answers
-      liftIO $ print "here"
       results <- collect (length xs) []
-      liftIO $ print "collected"
 
       liftIO $ writeIORef resultListRef results
-      liftIO $ print "written"
 
       -- terminateAllSlaves backend
+      terminate
 
       where
-        -- What to start on the slaves
-        -- slaveProcess = $(mkClosure 'slave)
-        slaveProcess = f
-
         collect 0 ress = return ress
         collect n ress | n > 0 = do
-          liftIO $ print "collecting"
-
-          masterPid <- getSelfPid
-          liftIO . putStrLn $ "collect PID: " ++ show masterPid
-
           res <- expect
-          liftIO . print $ "collected " ++ show (res :: b)
           collect (n-1) (res:ress)
