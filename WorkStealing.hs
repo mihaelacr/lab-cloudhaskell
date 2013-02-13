@@ -34,13 +34,12 @@ workStealingSlave slaveProcess (workQueue, resultQueue) = do
       -- What will happen if we don't, with every master setting up the slaves again?
 
       -- If there is work, do it
-      receiveWait (
+      receiveWait $
         [ match $ \(x :: a) -> (slaveProcess x >>= send resultQueue) >> run us
         , matchUnknown $ do
                             logSlave "WARNING: Unknown message received"
                             run us
         ]
-        )
 
 
 -- | Sets up a master for work pushing.
