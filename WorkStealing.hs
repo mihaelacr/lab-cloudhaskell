@@ -23,15 +23,16 @@ instance Binary WorkStealingControlMessage where
       _ -> fail "WorkStealingControlMessage.get: invalid"
 
 
-newtype WorkStealingArguments = WorkStealingArguments (ProcessId, ProcessId)
-                              deriving (Typeable, Binary)
+-- newtype WorkStealingArguments = WorkStealingArguments (ProcessId, ProcessId)
+--                               deriving (Typeable, Binary)
+type WorkStealingArguments = (ProcessId, ProcessId)
 
 
-workStealingSlave :: forall a b . (Serializable a, Serializable b) =>
-                                  (ProcessId -> a -> Process b)
-                               -> WorkStealingArguments
-                               -> Process ()
-workStealingSlave slaveProcess (WorkStealingArguments (master, workQueue)) = do
+workStealingSlave :: forall a b . (Serializable a, Serializable b, Show b) =>
+                                  (a -> Process b)
+                               -> WorkStealingArguments -> Process ()
+-- workStealingSlave slaveProcess (WorkStealingArguments (master, workQueue)) = do
+workStealingSlave slaveProcess (master, workQueue) = do
     us <- getSelfPid
     logSlave "INITIALIZED"
     run us
@@ -47,7 +48,12 @@ workStealingSlave slaveProcess (WorkStealingArguments (master, workQueue)) = do
 
       -- If there is work, do it
       receiveWait (
-        [ match $ \(x :: a) -> (slaveProcess master x >>= send master) >> run us
+        -- [ match $ \(x :: a) -> (slaveProcess master x >>= send master) >> run us
+        [ match $ \(x :: a) -> do
+                                  res <- slaveProcess x
+                                  send master res
+                                  liftIO . print $ ("res", res)
+                                  run us
         , match $ \NoMoreWork -> return ()
         , matchUnknown $ do
                             logSlave "WARNING: Unknown message received"
@@ -65,6 +71,7 @@ forkWorkStealingMaster :: (Serializable work) =>
                        -> Process ()
 forkWorkStealingMaster slaveProcess work slaves = do
   masterPid <- getSelfPid
+  logMaster $ "forkWorkStealingMaster PID: " ++ show masterPid
 
   -- Make a working queue process that handles assigning work to ready slaves
   queue <- spawnLocal workQueue
@@ -80,7 +87,7 @@ forkWorkStealingMaster slaveProcess work slaves = do
       -- Reply with the next bit of work to be done
       forM_ work $ \workUnit -> do
         slavePid <- expect
-        logMaster $ "SLAVE ANNOUNCED " ++ show slavePid ++ " READYNESS"
+        logMaster $ "SLAVE ANNOUNCED READYNESS: " ++ show slavePid
         send slavePid workUnit
         logMaster $ "SENT WORK TO " ++ show slavePid
 
