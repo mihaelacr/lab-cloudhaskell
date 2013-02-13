@@ -8,11 +8,9 @@ import Control.Distributed.Process.Closure
 import Control.Distributed.Process.Node (initRemoteTable)
 import Control.Distributed.Process.Backend.SimpleLocalnet
 import Control.Distributed.Process.Serializable
-import Control.Monad
 import System.Exit
 import System.IO (hPutStrLn, stderr)
 import Network.HostName (getHostName)
-import Data.IORef
 import Control.Concurrent.Chan as Chan
 
 import WorkStealing (WorkStealingArguments, forkWorkStealingMaster, workStealingSlave)
@@ -61,15 +59,10 @@ setUp remoteClosure = do
   return (inChan, outChan)
 
   where
-    master' _backend inChan _outChan slaves = do
-      -- Start off worker slaves handling (forks off a process)
-      workInputChan <- forkWorkStealingMaster remoteClosure inChan slaves
+    master' _backend inChan outChan slaves = do
 
-      -- Start off result receival
-      -- spawnLocal $ do
-      --   forever $ do
-      --     res :: b <- expect
-      --     liftIO $ writeChan outChan res
+      -- Start off worker slaves handling (forks off a process)
+      forkWorkStealingMaster remoteClosure inChan outChan slaves
 
       liftIO . putStrLn $ "spawned receival"
 
@@ -97,7 +90,7 @@ master :: Backend -> [NodeId] -> Process ()
 master backend slaves = do
   -- Start off worker slaves handling (forks off a process)
   -- workInputChan <- forkWorkStealingMaster slaveProcess undefined slaves
-  forkWorkStealingMaster slaveProcess (undefined :: Chan Int) slaves
+  forkWorkStealingMaster slaveProcess (undefined :: Chan Int) (undefined :: Chan Int)  slaves
 
   -- mapM (sendChan workInputChan) work
 

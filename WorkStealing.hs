@@ -33,7 +33,7 @@ workStealingSlave :: forall a b . (Serializable a, Serializable b, Show b) =>
                                   (a -> Process b)
                                -> WorkStealingArguments -> Process ()
 -- workStealingSlave slaveProcess (WorkStealingArguments (master, workQueue)) = do
-workStealingSlave slaveProcess (master, workQueue) = do
+workStealingSlave slaveProcess (workQueue, resultQueue) = do
     us <- getSelfPid
     logSlave "INITIALIZED"
     run us
@@ -52,7 +52,7 @@ workStealingSlave slaveProcess (master, workQueue) = do
         -- [ match $ \(x :: a) -> (slaveProcess master x >>= send master) >> run us
         [ match $ \(x :: a) -> do
                                   res <- slaveProcess x
-                                  send master res
+                                  send resultQueue res
                                   liftIO . print $ ("res", res)
                                   run us
         , match $ \NoMoreWork -> return ()
@@ -65,13 +65,14 @@ workStealingSlave slaveProcess (master, workQueue) = do
 
 -- | Sets up a master for work pushing.
 -- Forks off a process that manages a work queue.
-forkWorkStealingMaster :: forall a . (Serializable a) =>
-                                     ((ProcessId, ProcessId) -> Closure (Process ()))
-                                  -> Chan a
-                                  -> [NodeId]
-                                  -- -> Process (SendPort a)
-                                  -> Process ()
-forkWorkStealingMaster slaveProcess queueChan slaves = do
+forkWorkStealingMaster :: forall a b . (Serializable a, Serializable b) =>
+                                       ((ProcessId, ProcessId) -> Closure (Process ()))
+                                    -> Chan a
+                                    -> Chan b
+                                    -> [NodeId]
+                                    -- -> Process (SendPort a)
+                                    -> Process ()
+forkWorkStealingMaster slaveProcess queueChan resChan slaves = do
   masterPid <- getSelfPid
   logMaster $ "forkWorkStealingMaster PID: " ++ show masterPid
 
@@ -83,8 +84,17 @@ forkWorkStealingMaster slaveProcess queueChan slaves = do
   -- queuePid <- spawnLocal (workQueue queueReceiveChan)
   queuePid <- spawnLocal (workQueue queueChan)
 
+  -- Start off result receival
+  resultQueuePid <- spawnLocal $ do
+    forever $ do
+      liftIO . putStrLn $ "expecting resultQueue"
+      res :: b <- expect
+      liftIO . putStrLn $ "received resultQueue"
+      liftIO $ writeChan resChan res
+
+
   -- Start slave processes on the slaves (asynchronous)
-  forM_ slaves $ \nid -> spawn nid (slaveProcess (masterPid, queuePid))
+  forM_ slaves $ \nid -> spawn nid (slaveProcess (queuePid, resultQueuePid))
 
   -- return queueInputChan
   -- return queueChan
