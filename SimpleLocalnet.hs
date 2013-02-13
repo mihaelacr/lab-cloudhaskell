@@ -8,10 +8,12 @@ import Control.Distributed.Process.Closure
 import Control.Distributed.Process.Node (initRemoteTable)
 import Control.Distributed.Process.Backend.SimpleLocalnet
 import Control.Distributed.Process.Serializable
+import Control.Monad
 import System.Exit
 import System.IO (hPutStrLn, stderr)
 import Network.HostName (getHostName)
 import Data.IORef
+import Control.Concurrent.Chan as Chan
 
 import WorkStealing (WorkStealingArguments, forkWorkStealingMaster, workStealingSlave)
 
@@ -45,41 +47,59 @@ remoteDouble = workStealingSlave $ \(x :: Int) -> return (2 * x)
 remotable ['slave, 'remoteDouble]
 
 
-setUp :: (Serializable a) => (WorkStealingArguments -> Closure (Process ())) -> IO (SendPort a)
+setUp :: forall a b . (Serializable a, Serializable b, Show a) => (WorkStealingArguments -> Closure (Process ())) -> IO (Chan a, Chan b)
 setUp remoteClosure = do
   host <- getHostName
 
   backend <- initializeBackend host "0" rtable
 
-  chanRef <- newIORef undefined
+  inChan <- Chan.newChan
+  outChan <- Chan.newChan
 
-  startMaster backend (master' backend chanRef)
+  startMaster backend (master' backend inChan outChan)
 
-  readIORef chanRef
+  return (inChan, outChan)
 
   where
-    master' _backend chanRef slaves = do
+    master' _backend inChan _outChan slaves = do
       -- Start off worker slaves handling (forks off a process)
-      workInputChan <- forkWorkStealingMaster remoteClosure slaves
-      liftIO $ writeIORef chanRef workInputChan
+      workInputChan <- forkWorkStealingMaster remoteClosure inChan slaves
+
+      -- Start off result receival
+      -- spawnLocal $ do
+      --   forever $ do
+      --     res :: b <- expect
+      --     liftIO $ writeChan outChan res
+
+      liftIO . putStrLn $ "spawned receival"
+
+      -- Loop forever in sending work
+      -- void $ spawnLocal $ forever $ do
+      --   liftIO . putStrLn $ "waiting for inChan input"
+      --   work <- liftIO $ readChan inChan
+      --   liftIO . putStrLn $ "sending work " ++ show work
+      --   sendChan workInputChan work
+      --   liftIO . putStrLn $ "sent to workInputChan"
 
 
 remoteDoubleClosure :: WorkStealingArguments -> Closure (Process ())
 remoteDoubleClosure = $(mkClosure 'remoteDouble)
 
-interactive :: SendPort Int -> [Int] -> IO [Int]
--- interactive = cloudMap [1,2,3,4::Int] $(mkClosure 'remoteDouble)
-interactive workInputChan l = cloudMap workInputChan l
 
+main2 = do
+  (inChan, outChan) <- setUp remoteDoubleClosure
+  r :: [Int] <- cloudMap inChan outChan [1..4::Int]
+  return r
 
 
 -- | What the master shall do.
 master :: Backend -> [NodeId] -> Process ()
 master backend slaves = do
   -- Start off worker slaves handling (forks off a process)
-  workInputChan <- forkWorkStealingMaster slaveProcess slaves
+  -- workInputChan <- forkWorkStealingMaster slaveProcess undefined slaves
+  forkWorkStealingMaster slaveProcess (undefined :: Chan Int) slaves
 
-  mapM (sendChan workInputChan) work
+  -- mapM (sendChan workInputChan) work
 
   -- Run the code that receives the slaves' answers
   result <- sumIntegers (fromIntegral n)
@@ -118,11 +138,11 @@ main = do
 
 
 -- cloudMap :: (Serializable a, Serializable b) => [a] -> (a -> b) -> IO [b]
-cloudMap :: forall a b . (Serializable a, Serializable b, Show b) => SendPort a -> [a] -> IO [b]
-cloudMap workInputChan xs = do
+cloudMap :: forall a b . (Serializable a, Serializable b, Show b) => Chan a -> Chan b -> [a] -> IO [b]
+cloudMap workInputChan outChan xs = do
     (liftIO $ putStrLn "asdf3")
 
-    mapM (sendChan workInputChan) xs
+    mapM (writeChan workInputChan) xs
 
     (liftIO $ putStrLn "asdf4")
     -- Run the code that receives the slaves' answers
@@ -132,10 +152,10 @@ cloudMap workInputChan xs = do
     -- liftIO $ writeIORef resultListRef results
 
     -- terminateAllSlaves backend
-    terminate
+    return results
 
     where
       collect 0 ress = return ress
       collect n ress | n > 0 = do
-        res <- expect
+        res <- readChan outChan
         collect (n-1) (res:ress)

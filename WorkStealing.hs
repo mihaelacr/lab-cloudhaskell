@@ -7,6 +7,7 @@ import Control.Monad
 import Control.Distributed.Process
 import Control.Distributed.Process.Serializable
 import Data.Typeable
+import Control.Concurrent.Chan as Chan
 import Data.Binary
 
 
@@ -66,33 +67,39 @@ workStealingSlave slaveProcess (master, workQueue) = do
 -- Forks off a process that manages a work queue.
 forkWorkStealingMaster :: forall a . (Serializable a) =>
                                      ((ProcessId, ProcessId) -> Closure (Process ()))
+                                  -> Chan a
                                   -> [NodeId]
-                                  -> Process (SendPort a)
-forkWorkStealingMaster slaveProcess slaves = do
+                                  -- -> Process (SendPort a)
+                                  -> Process ()
+forkWorkStealingMaster slaveProcess queueChan slaves = do
   masterPid <- getSelfPid
   logMaster $ "forkWorkStealingMaster PID: " ++ show masterPid
 
   -- TODO create typed channel here instead of manual send/expect
-  (queueInputChan, queueReceiveChan) <- newChan
+  -- (queueInputChan, queueReceiveChan) <- newChan
+  -- queueChan <- liftIO Chan.newChan
 
   -- Make a working queue process that handles assigning work to ready slaves
-  queuePid <- spawnLocal (workQueue queueReceiveChan)
+  -- queuePid <- spawnLocal (workQueue queueReceiveChan)
+  queuePid <- spawnLocal (workQueue queueChan)
 
   -- Start slave processes on the slaves (asynchronous)
   forM_ slaves $ \nid -> spawn nid (slaveProcess (masterPid, queuePid))
 
-  return queueInputChan
+  -- return queueInputChan
+  -- return queueChan
 
   where
     logMaster s = liftIO . putStrLn $ "Work stealing master: " ++ s
 
-    workQueue :: (Serializable a) => ReceivePort a -> Process ()
+    workQueue :: (Serializable a) => Chan a -> Process ()
     workQueue queueReceiveChan = do
       -- Reply with the next bit of work to be done
       _ <- forever $ do
         slavePid <- expect
         logMaster $ "SLAVE ANNOUNCED READYNESS: " ++ show slavePid
-        workUnit <- receiveChan queueReceiveChan
+        workUnit <- liftIO $ readChan queueReceiveChan
+        logMaster $ "got receiveChan work"
         send slavePid workUnit
         logMaster $ "SENT WORK TO " ++ show slavePid
 
