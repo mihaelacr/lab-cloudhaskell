@@ -45,11 +45,31 @@ remoteDouble = workStealingSlave $ \(x :: Int) -> return (2 * x)
 remotable ['slave, 'remoteDouble]
 
 
+setUp :: (Serializable a) => (WorkStealingArguments -> Closure (Process ())) -> IO (SendPort a)
+setUp remoteClosure = do
+  host <- getHostName
 
-interactive :: [Int] -> IO [Int]
+  backend <- initializeBackend host "0" rtable
+
+  chanRef <- newIORef undefined
+
+  startMaster backend (master' backend chanRef)
+
+  readIORef chanRef
+
+  where
+    master' _backend chanRef slaves = do
+      -- Start off worker slaves handling (forks off a process)
+      workInputChan <- forkWorkStealingMaster remoteClosure slaves
+      liftIO $ writeIORef chanRef workInputChan
+
+
+remoteDoubleClosure :: WorkStealingArguments -> Closure (Process ())
+remoteDoubleClosure = $(mkClosure 'remoteDouble)
+
+interactive :: SendPort Int -> [Int] -> IO [Int]
 -- interactive = cloudMap [1,2,3,4::Int] $(mkClosure 'remoteDouble)
-interactive l = cloudMap l $(mkClosure 'remoteDouble)
-
+interactive workInputChan l = cloudMap workInputChan l
 
 
 
@@ -57,7 +77,9 @@ interactive l = cloudMap l $(mkClosure 'remoteDouble)
 master :: Backend -> [NodeId] -> Process ()
 master backend slaves = do
   -- Start off worker slaves handling (forks off a process)
-  forkWorkStealingMaster slaveProcess work slaves
+  workInputChan <- forkWorkStealingMaster slaveProcess slaves
+
+  mapM (sendChan workInputChan) work
 
   -- Run the code that receives the slaves' answers
   result <- sumIntegers (fromIntegral n)
@@ -96,28 +118,24 @@ main = do
 
 
 -- cloudMap :: (Serializable a, Serializable b) => [a] -> (a -> b) -> IO [b]
-cloudMap :: forall a b . (Serializable a, Serializable b, Show b) => [a] -> (WorkStealingArguments -> Closure (Process ())) -> IO [b]
-cloudMap xs slaveProcess = do
-  host <- getHostName
-  backend <- initializeBackend host "0" rtable
-  resultListRef <- newIORef []
-  startMaster backend (master' backend resultListRef)
-  readIORef resultListRef
-  where
-    master' _backend resultListRef slaves = do
-      -- Start off worker slaves handling (forks off a process)
-      forkWorkStealingMaster slaveProcess xs slaves
+cloudMap :: forall a b . (Serializable a, Serializable b, Show b) => SendPort a -> [a] -> IO [b]
+cloudMap workInputChan xs = do
+    (liftIO $ putStrLn "asdf3")
 
-      -- Run the code that receives the slaves' answers
-      results <- collect (length xs) []
+    mapM (sendChan workInputChan) xs
 
-      liftIO $ writeIORef resultListRef results
+    (liftIO $ putStrLn "asdf4")
+    -- Run the code that receives the slaves' answers
+    results <- collect (length xs) []
+    (liftIO $ putStrLn "asdf5")
 
-      -- terminateAllSlaves backend
-      terminate
+    -- liftIO $ writeIORef resultListRef results
 
-      where
-        collect 0 ress = return ress
-        collect n ress | n > 0 = do
-          res <- expect
-          collect (n-1) (res:ress)
+    -- terminateAllSlaves backend
+    terminate
+
+    where
+      collect 0 ress = return ress
+      collect n ress | n > 0 = do
+        res <- expect
+        collect (n-1) (res:ress)

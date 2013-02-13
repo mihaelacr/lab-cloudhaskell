@@ -64,37 +64,43 @@ workStealingSlave slaveProcess (master, workQueue) = do
 
 -- | Sets up a master for work pushing.
 -- Forks off a process that manages a work queue.
-forkWorkStealingMaster :: (Serializable work) =>
-                          ((ProcessId, ProcessId) -> Closure (Process ()))
-                       -> [work]
-                       -> [NodeId]
-                       -> Process ()
-forkWorkStealingMaster slaveProcess work slaves = do
+forkWorkStealingMaster :: forall a . (Serializable a) =>
+                                     ((ProcessId, ProcessId) -> Closure (Process ()))
+                                  -> [NodeId]
+                                  -> Process (SendPort a)
+forkWorkStealingMaster slaveProcess slaves = do
   masterPid <- getSelfPid
   logMaster $ "forkWorkStealingMaster PID: " ++ show masterPid
 
+  -- TODO create typed channel here instead of manual send/expect
+  (queueInputChan, queueReceiveChan) <- newChan
+
   -- Make a working queue process that handles assigning work to ready slaves
-  queue <- spawnLocal workQueue
+  queuePid <- spawnLocal (workQueue queueReceiveChan)
 
   -- Start slave processes on the slaves (asynchronous)
-  forM_ slaves $ \nid -> spawn nid (slaveProcess (masterPid, queue))
+  forM_ slaves $ \nid -> spawn nid (slaveProcess (masterPid, queuePid))
+
+  return queueInputChan
 
   where
     logMaster s = liftIO . putStrLn $ "Work stealing master: " ++ s
 
-    workQueue :: Process ()
-    workQueue = do
+    workQueue :: (Serializable a) => ReceivePort a -> Process ()
+    workQueue queueReceiveChan = do
       -- Reply with the next bit of work to be done
-      forM_ work $ \workUnit -> do
+      _ <- forever $ do
         slavePid <- expect
         logMaster $ "SLAVE ANNOUNCED READYNESS: " ++ show slavePid
+        workUnit <- receiveChan queueReceiveChan
         send slavePid workUnit
         logMaster $ "SENT WORK TO " ++ show slavePid
 
-      logMaster "ALL WORK DONE, NOTIFYING SLAVES OF WORK DONE"
+      -- logMaster "ALL WORK DONE, NOTIFYING SLAVES OF WORK DONE"
+      logMaster "ALL WORK DONE, WORK QUEUE TERMINATING"
 
       -- Once all the work is done, tell the slaves that there is no more work
       -- This does not terminate
-      forever $ do
-        pid <- expect
-        send pid NoMoreWork
+      -- forever $ do
+      --   pid <- expect
+      --   send pid NoMoreWork
