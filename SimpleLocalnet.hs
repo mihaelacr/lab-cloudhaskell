@@ -95,7 +95,8 @@ main = do
       hPutStrLn stderr "invalid arguments" >> exitFailure
 
 
--- cloudMap :: (Serializable a, Serializable b) => [a] -> (a -> b) -> IO [b]
+-- | cloudMap can only be used once per application, because it uses startMaster.
+-- See https://cloud-haskell.atlassian.net/browse/DPSLN-10.
 cloudMap :: forall a b . (Serializable a, Serializable b, Show b) => [a] -> (WorkStealingArguments -> Closure (Process ())) -> IO [b]
 cloudMap xs slaveProcess = do
   host <- getHostName
