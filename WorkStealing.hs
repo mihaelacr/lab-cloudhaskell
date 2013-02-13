@@ -82,6 +82,8 @@ forkWorkStealingMaster slaveProcess workChan resChan slaves = do
         logMaster $ "SENT WORK TO " ++ show slavePid
 
 
+-- | setUpRemoteFun can only be used once per application, because it uses startMaster.
+-- See https://cloud-haskell.atlassian.net/browse/DPSLN-10.
 setUpRemoteFun :: forall a b . (Serializable a, Serializable b, Show a) =>
                                (WorkStealingArguments -> Closure (Process ()))
                             -> Backend
